@@ -304,11 +304,12 @@ function shell(navItems,content){
 function renderApp(){
   if(!S.user){renderLogin();return;}
   if(S.isAdmin){
-    const nav=[{id:'admin',icon:'🛰️',label:'Cabina di comando'},{id:'analytics',icon:'📊',label:'Analisi'},{id:'roles',icon:'👥',label:'Team'},{id:'targets',icon:'🎯',label:'Obiettivi'},{id:'kpis',icon:'⚙️',label:'KPI & Reparti'},{id:'sim',icon:'🎚️',label:'Simulatore'}];
-    if(!['admin','analytics','roles','targets','kpis','sim'].includes(S.view))S.view='admin';
+    const nav=[{id:'admin',icon:'🛰️',label:'Cabina di comando'},{id:'analytics',icon:'📊',label:'Analisi'},{id:'plan',icon:'🗺️',label:'Piano Marketing'},{id:'roles',icon:'👥',label:'Team'},{id:'targets',icon:'🎯',label:'Obiettivi'},{id:'kpis',icon:'⚙️',label:'KPI & Reparti'},{id:'sim',icon:'🎚️',label:'Simulatore'}];
+    if(!['admin','analytics','plan','roles','targets','kpis','sim'].includes(S.view))S.view='admin';
     const c=el('div'); shell(nav,c);
     if(S.view==='sim') viewSimulator(c);
     else if(S.view==='analytics') viewAnalytics(c,'admin');
+    else if(S.view==='plan') viewMarketingPlan(c,true);
     else if(S.view==='roles') viewTeamAssign(c);
     else if(S.view==='targets') viewTargets(c);
     else if(S.view==='kpis') viewKpiBuilder(c);
@@ -316,20 +317,22 @@ function renderApp(){
     return;
   }
   if(S.isManager){
-    const nav=[{id:'admin',icon:'👥',label:'Il mio reparto'},{id:'analytics',icon:'📊',label:'Analisi'},{id:'sim',icon:'🎚️',label:'Simulatore'}];
-    if(!['admin','analytics','sim'].includes(S.view))S.view='admin';
+    const nav=[{id:'admin',icon:'👥',label:'Il mio reparto'},{id:'analytics',icon:'📊',label:'Analisi'},{id:'plan',icon:'🗺️',label:'Piano Marketing'},{id:'sim',icon:'🎚️',label:'Simulatore'}];
+    if(!['admin','analytics','plan','sim'].includes(S.view))S.view='admin';
     const c=el('div'); shell(nav,c);
     if(S.view==='sim') viewSimulator(c);
     else if(S.view==='analytics') viewAnalytics(c,'manager');
+    else if(S.view==='plan') viewMarketingPlan(c,false);
     else viewAdmin(c,'manager');
     return;
   }
   if(!S.role){ renderNotAssigned(); return; }
-  const nav=[{id:'today',icon:'📌',label:'Oggi'},{id:'trend',icon:'📈',label:'Andamento'},{id:'sim',icon:'🎚️',label:'Simulatore'}];
-  if(!['today','trend','sim'].includes(S.view))S.view='today';
+  const nav=[{id:'today',icon:'📌',label:'Oggi'},{id:'trend',icon:'📈',label:'Andamento'},{id:'plan',icon:'🗺️',label:'Piano Marketing'},{id:'sim',icon:'🎚️',label:'Simulatore'}];
+  if(!['today','trend','plan','sim'].includes(S.view))S.view='today';
   const c=el('div'); shell(nav,c);
   if(S.view==='today') viewToday(c);
   else if(S.view==='trend') viewTrend(c);
+  else if(S.view==='plan') viewMarketingPlan(c,false);
   else viewSimulator(c);
 }
 
@@ -376,6 +379,74 @@ async function viewTargets(c){
     save.textContent='✓ Salvato';msg.textContent=`Target aggiornati (${touched} modificati).`;toast('Obiettivi salvati');
     setTimeout(()=>{save.disabled=false;save.textContent='💾 Salva tutti gli obiettivi';},1600);
   });
+}
+
+/* ---------- PIANO MARKETING (giu→dic) — visibile a tutti, editabile admin ---------- */
+const MESI_IT=['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+const PLAN_METRICS=[{k:'fatturato',label:'Fatturato',unit:'€'},{k:'lead',label:'Lead',unit:'n'},{k:'appuntamenti',label:'Appuntamenti',unit:'n'},{k:'call',label:'Call',unit:'n'}];
+function planEur(v){return '€'+nf.format(Math.round(v||0));}
+function planFmt(v,unit){return unit==='€'?planEur(v):nf.format(Math.round((v||0)*10)/10);}
+async function viewMarketingPlan(c,editable){
+  c.innerHTML=`<div class="page-head"><div><h1>🗺️ Piano Marketing <span class="muted" style="font-size:15px">giu → dic 2026</span></h1>
+    <p class="sub">L'ingranaggio del fatturato: obiettivo <b>mensile → settimanale → giornaliero</b> per fatturato, lead, appuntamenti e call. ${editable?'Tu lo imposti, il team lo vede.':'Sola lettura — lo impostano gli admin.'}</p></div></div>
+    <div id="mpWhere"></div><div id="mpBody"><div class="empty">Carico…</div></div>`;
+  let plan;
+  if(DEMO){ plan=[{month:'2026-06-01',fatturato:70000,lead:350,appuntamenti:120,call:600,estimated:false},{month:'2026-07-01',fatturato:80000,lead:0,appuntamenti:0,call:0,estimated:true},{month:'2026-08-01',fatturato:60000,lead:0,appuntamenti:0,call:0,estimated:true}]; }
+  else { const {data}=await sb.from('marketing_plan').select('*').order('month'); plan=data||[]; }
+  let actualCash=0, anyEntry=false;
+  if(!DEMO){ const ms=isoDay(monthStart()); const {data:ent}=await sb.from('os_entries').select('day,kpis,role').gte('day',ms); (ent||[]).forEach(e=>{anyEntry=true; if(e.role==='closer') actualCash+=+(e.kpis?.cash_collected||0);}); }
+  const nowM=today().getMonth();
+  const cur=plan.find(p=>+p.month.slice(5,7)===nowM+1);
+  const wbox=$('#mpWhere',c);
+  if(cur){
+    const tgt=+cur.fatturato||0; const pct=tgt?Math.min(100,Math.round(actualCash/tgt*100)):0;
+    const dayN=today().getDate(); const expPct=Math.round(dayN/WORKDAYS_MONTH*100);
+    const bott = !anyEntry ? '⚠️ Nessuna compilazione ancora: l\'app non sa dove siamo davvero. Il piano resta teorico finché il team non segna i numeri ogni sera.' :
+      actualCash>=tgt*dayN/WORKDAYS_MONTH ? '✅ In ritmo col mese.' : '🔴 Sotto ritmo: a oggi servirebbe ~'+planEur(tgt*dayN/WORKDAYS_MONTH)+', siamo a '+planEur(actualCash)+'. Questo è il collo di bottiglia da spingere.';
+    wbox.innerHTML=`<div class="card" style="margin-bottom:16px"><div class="card-h"><h3>📍 Dove siamo — ${MESI_IT[nowM]}</h3><span class="muted">${planEur(actualCash)} / ${planEur(tgt)} (${pct}%)</span></div>
+      <div style="height:14px;background:var(--line);border-radius:8px;overflow:hidden;margin:4px 0 8px"><div style="height:100%;width:${pct}%;background:${pct>=expPct?'var(--brand)':'#e0a800'};transition:width .4s"></div></div>
+      <p class="muted" style="margin:0">${bott}</p></div>`;
+  }
+  const body=$('#mpBody',c); body.innerHTML='';
+  const inputs={};
+  plan.forEach(p=>{
+    const mi=+p.month.slice(5,7)-1; const isCur=mi===nowM;
+    const card=el('div','card'); card.style.cssText='margin-bottom:14px'+(isCur?';border:2px solid var(--brand)':'');
+    card.innerHTML=`<div class="card-h"><h3>${MESI_IT[mi]} 2026 ${isCur?'<span class="pill role">in corso</span>':''} ${p.estimated?'<span class="pill" style="background:#fff3cd;color:#9a6700">stima · da tarare</span>':''}</h3></div>`;
+    const grid=el('div'); grid.style.cssText='display:grid;grid-template-columns:1fr;gap:0';
+    PLAN_METRICS.forEach(m=>{
+      const val=+p[m.k]||0; const inId='mp_'+mi+'_'+m.k;
+      const inHtml = editable
+        ? `<div class="f-in" style="margin:0"><input id="${inId}" type="number" min="0" inputmode="numeric" value="${val}" style="width:120px"><span class="unit">${m.unit}</span></div>`
+        : `<b style="font-size:17px;min-width:90px;text-align:right">${planFmt(val,m.unit)}</b>`;
+      const row=el('div'); row.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 0;border-top:1px solid var(--line)';
+      row.innerHTML=`<div style="flex:1;min-width:110px"><b>${m.label}</b><br><small class="muted">obiettivo mese</small></div>
+        ${inHtml}
+        <div style="text-align:right;min-width:84px"><div id="mw_${mi}_${m.k}" style="font-weight:600">${planFmt(val/4.33,m.unit)}</div><small class="muted">/ settimana</small></div>
+        <div style="text-align:right;min-width:74px"><div id="md_${mi}_${m.k}" style="font-weight:600">${planFmt(val/WORKDAYS_MONTH,m.unit)}</div><small class="muted">/ giorno</small></div>`;
+      grid.appendChild(row);
+      if(editable) inputs[inId]={mi,k:m.k,unit:m.unit};
+    });
+    card.appendChild(grid); body.appendChild(card);
+  });
+  if(editable){
+    Object.keys(inputs).forEach(id=>{
+      const {mi,k,unit}=inputs[id]; const inp=$('#'+id,c); if(!inp)return;
+      inp.addEventListener('input',()=>{const v=+inp.value||0; $('#mw_'+mi+'_'+k,c).textContent=planFmt(v/4.33,unit); $('#md_'+mi+'_'+k,c).textContent=planFmt(v/WORKDAYS_MONTH,unit);});
+    });
+    const row=el('div');row.style.cssText='display:flex;align-items:center;gap:12px;position:sticky;bottom:0;background:linear-gradient(transparent,var(--bg) 40%);padding:14px 0';
+    const save=el('button','btn btn-primary','💾 Salva piano'); const msg=el('span','muted');
+    row.appendChild(save);row.appendChild(msg);c.appendChild(row);
+    save.addEventListener('click',async()=>{
+      if(DEMO){toast('Demo: salvataggio disattivato');return;}
+      save.disabled=true;save.textContent='Salvo…';
+      const rows=plan.map(p=>{const mi=+p.month.slice(5,7)-1; const r={month:p.month,estimated:p.estimated,updated_at:new Date().toISOString()}; PLAN_METRICS.forEach(m=>{const inp=$('#mp_'+mi+'_'+m.k,c); r[m.k]=inp?+inp.value||0:(+p[m.k]||0);}); return r;});
+      const {error}=await sb.from('marketing_plan').upsert(rows,{onConflict:'month'});
+      save.disabled=false;save.textContent='💾 Salva piano';
+      if(error){msg.style.color='var(--bad)';msg.textContent='Errore: '+error.message;return;}
+      msg.style.color='var(--brand)';msg.textContent='Piano salvato.';toast('Piano marketing salvato');
+    });
+  }
 }
 
 /* ---------- ADMIN: TEAM / COLLABORATORI (ruolo + attivo + trackable) ---------- */
@@ -644,7 +715,7 @@ async function viewTrend(c){
 function viewSimulator(c){
   const target = S.isAdmin ? '' : ('#'+S.role);
   c.innerHTML=`<div class="page-head"><div><h1>🎚️ Simulatore compensi</h1><p class="sub">Quanto vale il tuo lavoro muovendo le leve del ruolo. Integrato nell'OS.</p></div></div>
-  <div class="card" style="padding:0;overflow:hidden;border-radius:var(--r)"><iframe src="${SIMULATOR_URL}${target}" title="Simulatore compensi" style="width:100%;height:82vh;border:none;display:block;background:var(--bg)"></iframe></div>`;
+  <div class="card" style="padding:0;overflow:hidden;border-radius:var(--r)"><iframe src="${SIMULATOR_URL}?embed=1${target}" title="Simulatore compensi" style="width:100%;height:82vh;border:none;display:block;background:var(--bg)"></iframe></div>`;
 }
 
 /* ---------- ADMIN: CABINA DI COMANDO (dashboard, selettore periodo) ---------- */
