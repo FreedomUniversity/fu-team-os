@@ -387,30 +387,34 @@ const MESI_IT=['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio',
 const MESI_ABBR=['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
 const PLAN_UNITS=['€','n','%'];
 const PLAN_LEGACY=['fatturato','lead','appuntamenti','call']; // colonne fisiche su marketing_plan (retrocompat NOT NULL)
-let PLAN_MODE='mese'; // mese | sett | giorno
 function planEur(v){return '€'+nf.format(Math.round(v||0));}
 function planFmt(v,unit){return unit==='€'?planEur(v):unit==='%'?(Math.round((v||0)*10)/10+'%'):nf.format(Math.round((v||0)*10)/10);}
 function planVal(p,key){ const v=p&&p.values&&p.values[key]; if(v!=null&&v!=='') return +v||0; return +((p||{})[key])||0; } // values jsonb con fallback colonna legacy
-function planDeriv(monthVal,mode){ return mode==='sett'? monthVal/4.33 : mode==='giorno'? monthVal/WORKDAYS_MONTH : monthVal; }
+// KPI calcolato (kind=calc): formula "num/den" → ratio 0-1 (null se denom 0). vget(key) ritorna il valore di un altro KPI.
+function planCalc(formula,vget){ if(!formula)return null; const m=formula.split('/'); const den=+vget(m[1].trim())||0; if(!den)return null; return (+vget(m[0].trim())||0)/den; }
+// derivati automatici mese→settimana→giorno (solo per KPI numerici assoluti, non per i tassi %)
+function planSubHtml(monthVal,unit){ if(unit==='%'||!monthVal) return ''; return `<div class="mp-sub">${planFmt(monthVal/4.33,unit)}/sett · ${planFmt(monthVal/WORKDAYS_MONTH,unit)}/g</div>`; }
 
 async function viewMarketingPlan(c,editable){
   c.innerHTML=`<div class="page-head"><div><h1>🗺️ Piano Marketing <span class="muted" style="font-size:15px">giu → dic 2026</span></h1>
-    <p class="sub">L'ingranaggio del fatturato: i mesi scorrono <b>da sinistra a destra</b>, i KPI sono le righe. ${editable?'Aggiungi i KPI che vuoi inseguire, imposta gli obiettivi mensili — il team li vede.':'Sola lettura — li impostano gli admin.'}</p></div>
-    <div class="seg" id="mpMode" style="align-self:flex-start"></div></div>
+    <p class="sub">I mesi scorrono <b>da sinistra a destra</b>, i KPI sono le righe. Ogni obiettivo mensile mostra in automatico il suo <b>ritmo settimanale e giornaliero</b>; i tassi % si calcolano da soli. ${editable?'Aggiungi e riordina i KPI che vuoi inseguire — il team li vede.':'Sola lettura — li impostano gli admin.'}</p></div></div>
     <div id="mpWhere"></div><div id="mpBar"></div><div id="mpBody"><div class="empty">Carico…</div></div>`;
-  // toggle Mese/Settimana/Giorno
-  const modes=[['mese','📅 Mese'],['sett','🗓️ Settimana'],['giorno','📆 Giorno']];
-  $('#mpMode',c).innerHTML=modes.map(([v,l])=>`<button data-m="${v}" class="${PLAN_MODE===v?'on':''}">${l}</button>`).join('');
-  $('#mpMode',c).addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;PLAN_MODE=b.dataset.m;$$('#mpMode button',c).forEach(x=>x.classList.toggle('on',x.dataset.m===PLAN_MODE));renderMatrix();});
 
   let kpis, plan;
   if(DEMO){
-    kpis=[{kpi_key:'fatturato',label:'Fatturato',unit:'€',category:'Risultato',source:'Pipedrive',actual_kpi:'cash_collected',actual_role:'closer',sort:10},
-      {kpi_key:'lead',label:'Lead',unit:'n',category:'Acquisizione',source:'Meta/Google',sort:20},
-      {kpi_key:'lead_meta',label:'Lead Meta',unit:'n',category:'Acquisizione',source:'Meta',sort:21},
-      {kpi_key:'appuntamenti',label:'Appuntamenti fissati',unit:'n',category:'Vendita',source:'CloudTalk',actual_kpi:'fissati',actual_role:'setter',sort:30},
-      {kpi_key:'call',label:'Call',unit:'n',category:'Vendita',source:'CloudTalk',actual_kpi:'chiamate_effettuate',actual_role:'setter',sort:40}];
-    plan=[{month:'2026-06-01',estimated:false,values:{fatturato:70000,lead:350,lead_meta:240,appuntamenti:120,call:600}},
+    kpis=[{kpi_key:'fatturato',label:'Fatturato',unit:'€',category:'Risultato',source:'Pipedrive',actual_kpi:'cash_collected',actual_role:'closer',kind:'number',sort:10},
+      {kpi_key:'conversioni',label:'Conversioni (corsisti)',unit:'n',category:'Risultato',source:'Pipedrive',actual_kpi:'vinti',actual_role:'closer',kind:'number',sort:15},
+      {kpi_key:'lead',label:'Lead',unit:'n',category:'Acquisizione',source:'Meta/Google',kind:'number',sort:22},
+      {kpi_key:'budget_adv',label:'Budget ADV',unit:'€',category:'Acquisizione',source:'Meta',kind:'number',sort:25},
+      {kpi_key:'cpl',label:'CPL',unit:'€',category:'Acquisizione',kind:'calc',formula:'budget_adv/lead',sort:28},
+      {kpi_key:'call',label:'Chiamate effettuate',unit:'n',category:'Vendita',source:'CloudTalk',actual_kpi:'chiamate_effettuate',actual_role:'setter',kind:'number',sort:40},
+      {kpi_key:'chiamate_risposte',label:'Chiamate risposte',unit:'n',category:'Vendita',source:'CloudTalk',actual_kpi:'chiamate_risposte',actual_role:'setter',kind:'number',sort:43},
+      {kpi_key:'tasso_risposta',label:'Tasso risposta',unit:'%',category:'Vendita',kind:'calc',formula:'chiamate_risposte/call',sort:46},
+      {kpi_key:'appuntamenti',label:'Appuntamenti fissati',unit:'n',category:'Vendita',source:'CloudTalk',actual_kpi:'fissati',actual_role:'setter',kind:'number',sort:50},
+      {kpi_key:'appuntamenti_processati',label:'Appuntamenti processati',unit:'n',category:'Vendita',source:'CloudTalk',actual_kpi:'presentati',actual_role:'closer',kind:'number',sort:55},
+      {kpi_key:'show_up_rate',label:'Show-up rate',unit:'%',category:'Vendita',kind:'calc',formula:'appuntamenti_processati/appuntamenti',sort:58},
+      {kpi_key:'tasso_conversione',label:'Tasso conversione',unit:'%',category:'Vendita',kind:'calc',formula:'conversioni/appuntamenti_processati',sort:62}];
+    plan=[{month:'2026-06-01',estimated:false,values:{fatturato:70000,conversioni:35,lead:1400,budget_adv:4800,call:1400,chiamate_risposte:560,appuntamenti:120,appuntamenti_processati:84}},
       {month:'2026-07-01',estimated:true,values:{fatturato:80000}},{month:'2026-08-01',estimated:true,values:{fatturato:60000}},
       {month:'2026-09-01',estimated:true,values:{fatturato:90000}},{month:'2026-10-01',estimated:true,values:{}},
       {month:'2026-11-01',estimated:true,values:{}},{month:'2026-12-01',estimated:true,values:{}}];
@@ -440,12 +444,30 @@ async function viewMarketingPlan(c,editable){
       <div style="height:14px;background:var(--line);border-radius:8px;overflow:hidden;margin:4px 0 8px"><div style="height:100%;width:${pct}%;background:${pct>=expPct?'var(--brand)':'#e0a800'};transition:width .4s"></div></div>
       <p class="muted" style="margin:0">${bott}</p></div>`;
   }
-  // toolbar admin: aggiungi KPI
+  // toolbar admin: pianificatore funnel + aggiungi KPI
   if(editable){
     const bar=$('#mpBar',c);
+    const monthOpts=plan.map(p=>{const mi=+p.month.slice(5,7)-1;return `<option value="${p.month}">${MESI_IT[mi]}</option>`;}).join('');
     bar.innerHTML=`<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+      <button class="btn btn-primary" id="mpPlanBtn">🎯 Pianifica un mese dal fatturato</button>
       <button class="btn btn-ghost" id="mpAddKpi">➕ Aggiungi KPI</button>
-      <span class="muted" style="font-size:12.5px">Riordina con ↑↓ · ✎ rinomina · 🗑 elimina. Le celle si compilano solo in modalità <b>Mese</b>.</span></div>
+      <span class="muted" style="font-size:12.5px">Riordina con ↑↓ · ✎ rinomina · 🗑 elimina. Compili i numeri, sett/giorno e i tassi % si calcolano da soli.</span></div>
+      <div class="card" id="mpPlanForm" style="display:none;margin-bottom:12px">
+        <div class="card-h"><h3>🎯 Pianifica il funnel da raggiungere</h3><span class="muted">Parti dal fatturato, scendi a tutti i KPI</span></div>
+        <p class="muted" style="font-size:12.5px;margin:0 0 10px">Scegli il mese, imposta il <b>fatturato obiettivo</b> e i tassi attesi: l'app calcola a ritroso quante vendite, appuntamenti, chiamate e lead servono — e li scrive nel mese.</p>
+        <div class="mp-planrow">
+          <label>Mese<select id="pfMonth">${monthOpts}</select></label>
+          <label>Fatturato obiettivo €<input id="pfFatt" type="number" min="0" placeholder="70000"></label>
+          <label>Valore medio corsista €<input id="pfAov" type="number" min="0" value="2000"></label>
+          <label>Tasso conversione %<input id="pfConv" type="number" min="0" max="100" value="30"></label>
+          <label>Show-up %<input id="pfShow" type="number" min="0" max="100" value="70"></label>
+          <label>Tasso fissaggio %<input id="pfFix" type="number" min="0" max="100" value="40"></label>
+          <label>Tasso risposta %<input id="pfResp" type="number" min="0" max="100" value="40"></label>
+          <label>CPL €<input id="pfCpl" type="number" min="0" value="3.5"></label>
+        </div>
+        <div id="pfPreview" class="mp-planprev muted" style="margin:10px 0;font-size:13px"></div>
+        <button class="btn btn-primary" id="pfApply">Calcola e applica al mese</button>
+        <span id="pfMsg" class="muted" style="font-size:13px;margin-left:10px"></span></div>
       <div class="card" id="mpAddForm" style="display:none;margin-bottom:12px">
         <div class="card-h"><h3>Nuovo KPI da inseguire</h3></div>
         <div class="datectl" style="gap:10px;flex-wrap:wrap">
@@ -456,6 +478,34 @@ async function viewMarketingPlan(c,editable){
           <button class="btn btn-primary" id="nkCreate">Crea KPI</button>
         </div>
         <div id="nkMsg" class="muted" style="font-size:13px;margin-top:6px"></div></div>`;
+    // ---- reverse funnel planner ----
+    function pfCalc(){
+      const fatt=+$('#pfFatt',c).value||0, aov=+$('#pfAov',c).value||0, conv=+$('#pfConv',c).value||0,
+        show=+$('#pfShow',c).value||0, fix=+$('#pfFix',c).value||0, resp=+$('#pfResp',c).value||0, cpl=+$('#pfCpl',c).value||0;
+      if(!fatt||!aov) return null;
+      const conversioni=Math.round(fatt/aov);
+      const processati=conv?Math.round(conversioni/(conv/100)):0;
+      const fissati=show?Math.round(processati/(show/100)):0;
+      const risposte=fix?Math.round(fissati/(fix/100)):0;
+      const effettuate=resp?Math.round(risposte/(resp/100)):0;
+      const lead=effettuate; // ogni lead entra in cadenza chiamate
+      const budget=Math.round(lead*cpl);
+      return {fatturato:fatt,conversioni,appuntamenti_processati:processati,appuntamenti:fissati,chiamate_risposte:risposte,call:effettuate,lead,budget_adv:budget};
+    }
+    function pfRender(){
+      const r=pfCalc(); const box=$('#pfPreview',c); if(!r){box.innerHTML='Inserisci fatturato e valore medio corsista per vedere il funnel.';return;}
+      box.innerHTML=`Per <b>${planEur(r.fatturato)}</b> servono → <b>${r.conversioni}</b> corsisti · <b>${r.appuntamenti_processati}</b> processati · <b>${r.appuntamenti}</b> fissati · <b>${r.chiamate_risposte}</b> risposte · <b>${r.call}</b> chiamate · <b>${r.lead}</b> lead · <b>${planEur(r.budget_adv)}</b> ADV`;
+    }
+    $('#mpPlanBtn',c).addEventListener('click',()=>{const f=$('#mpPlanForm',c);f.style.display=f.style.display==='none'?'block':'none';pfRender();});
+    ['pfFatt','pfAov','pfConv','pfShow','pfFix','pfResp','pfCpl'].forEach(id=>$('#'+id,c).addEventListener('input',pfRender));
+    $('#pfApply',c).addEventListener('click',()=>{
+      const r=pfCalc(); if(!r){$('#pfMsg',c).textContent='Inserisci almeno fatturato e valore medio.';return;}
+      const mon=$('#pfMonth',c).value; const p=plan.find(x=>x.month===mon); if(!p)return;
+      p.values={...(p.values||{}),...r};
+      const mi=+mon.slice(5,7)-1;
+      $('#pfMsg',c).style.color='var(--brand)'; $('#pfMsg',c).textContent='✓ '+MESI_IT[mi]+' pianificato — controlla e premi 💾 Salva piano';
+      renderMatrix();
+    });
     $('#mpAddKpi',c).addEventListener('click',()=>{const f=$('#mpAddForm',c);f.style.display=f.style.display==='none'?'block':'none';});
     $('#nkCreate',c).addEventListener('click',async()=>{
       const label=$('#nkLabel',c).value.trim(); const unit=$('#nkUnit',c).value; const cat=$('#nkCat',c).value.trim()||'Generale'; const src=$('#nkSrc',c).value.trim()||null;
@@ -472,35 +522,42 @@ async function viewMarketingPlan(c,editable){
     });
   }
 
+  // gruppi categoria nell'ordine di sort corrente
+  function groupCats(){ const cats=[]; const byCat={}; kpis.forEach(k=>{ if(!byCat[k.category]){byCat[k.category]=[];cats.push(k.category);} byCat[k.category].push(k); }); return {cats,byCat}; }
+  async function persistSorts(arr){ if(DEMO)return; for(const k of arr){ await sb.from('marketing_kpis').update({sort:k.sort}).eq('kpi_key',k.kpi_key); } }
+
   // ---- render della matrice (KPI=righe, mesi=colonne) ----
   function renderMatrix(){
-    const body=$('#mpBody',c); const mode=PLAN_MODE;
+    const body=$('#mpBody',c);
     if(!kpis.length){ body.innerHTML='<div class="empty">Nessun KPI ancora. '+(editable?'Aggiungine uno con «➕ Aggiungi KPI».':'')+'</div>'; return; }
-    // raggruppa per categoria preservando l'ordine sort
-    const cats=[]; const byCat={};
-    kpis.forEach(k=>{ if(!byCat[k.category]){byCat[k.category]=[];cats.push(k.category);} byCat[k.category].push(k); });
+    const {cats,byCat}=groupCats();
     const monthHead=plan.map(p=>{const mi=+p.month.slice(5,7)-1;const isCur=mi===nowM;return `<th class="${isCur?'mp-cur':''}">${MESI_ABBR[mi]}${isCur?'<br><span class="mp-now">in corso</span>':p.estimated?'<br><span class="mp-est">stima</span>':''}</th>`;}).join('');
-    let html=`<div class="card mp-wrap" style="padding:0;overflow:auto"><table class="mp-grid"><thead><tr><th class="mp-kpi">KPI <span class="muted" style="font-weight:500">/ ${mode==='sett'?'settimana':mode==='giorno'?'giorno':'mese'}</span></th>${monthHead}</tr></thead><tbody>`;
-    cats.forEach(cat=>{
-      html+=`<tr class="mp-cathead"><td colspan="${plan.length+1}">${cat}</td></tr>`;
-      byCat[cat].forEach((k,idx)=>{
-        const isLegacy=PLAN_LEGACY.includes(k.kpi_key);
-        const acts = k.actual_kpi ? '<span class="mp-live" title="ha un dato reale dal tracker">● live</span>' : '';
-        const adminTools = editable ? `<span class="mp-tools"><button data-act="up" data-k="${k.kpi_key}" title="su">↑</button><button data-act="down" data-k="${k.kpi_key}" title="giù">↓</button><button data-act="ren" data-k="${k.kpi_key}" title="rinomina">✎</button>${isLegacy?'':`<button data-act="del" data-k="${k.kpi_key}" title="elimina">🗑</button>`}</span>` : '';
+    let html=`<div class="card mp-wrap" style="padding:0;overflow:auto"><table class="mp-grid"><thead><tr><th class="mp-kpi">KPI <span class="muted" style="font-weight:500">/ mese · sett · giorno</span></th>${monthHead}</tr></thead><tbody>`;
+    cats.forEach((cat,ci)=>{
+      const catTools = editable ? `<span class="mp-cattools"><button data-cact="up" data-cat="${cat}" title="sposta sezione su" ${ci===0?'disabled':''}>↑</button><button data-cact="down" data-cat="${cat}" title="sposta sezione giù" ${ci===cats.length-1?'disabled':''}>↓</button></span>` : '';
+      html+=`<tr class="mp-cathead"><td colspan="${plan.length+1}"><span class="mp-catname">${cat}</span>${catTools}</td></tr>`;
+      byCat[cat].forEach((k,gi)=>{
+        const isLegacy=PLAN_LEGACY.includes(k.kpi_key); const isCalc=k.kind==='calc';
+        const acts = k.actual_kpi ? '<span class="mp-live" title="ha un dato reale dal tracker">● live</span>' : (isCalc?'<span class="mp-auto" title="si calcola da solo dagli altri KPI">∑ auto</span>':'');
+        const adminTools = editable ? `<span class="mp-tools"><button data-act="up" data-k="${k.kpi_key}" title="su" ${gi===0?'disabled':''}>↑</button><button data-act="down" data-k="${k.kpi_key}" title="giù" ${gi===byCat[cat].length-1?'disabled':''}>↓</button><button data-act="ren" data-k="${k.kpi_key}" title="rinomina">✎</button>${isLegacy?'':`<button data-act="del" data-k="${k.kpi_key}" title="elimina">🗑</button>`}</span>` : '';
         html+=`<tr><td class="mp-kpi"><div class="mp-klabel"><b>${k.label}</b> <span class="mp-unit">${k.unit}</span> ${acts}</div>${k.source?`<small class="muted">fonte: ${k.source}</small>`:''}${adminTools}</td>`;
         plan.forEach(p=>{
           const mi=+p.month.slice(5,7)-1; const isCur=mi===nowM;
-          const monthV=planVal(p,k.kpi_key); const shown=planDeriv(monthV,mode);
-          let cell;
-          if(editable && mode==='mese'){
-            cell=`<input class="mp-in" data-mi="${mi}" data-k="${k.kpi_key}" type="number" min="0" inputmode="numeric" value="${monthV||''}" placeholder="0">`;
+          let cell, sub='', live='';
+          if(isCalc){
+            const ratio=planCalc(k.formula,kk=>planVal(p,kk));
+            cell=`<span class="mp-v mp-calc" id="mp-c-${mi}-${k.kpi_key}">${ratio==null?"<span class='muted'>—</span>":Math.round(ratio*100)+'%'}</span>`;
+            if(isCur){ const rr=planCalc(k.formula,kk=>actuals[kk]||0); if(rr!=null) live=`<small class="mp-real">${Math.round(rr*100)}% reale</small>`; }
           } else {
-            cell=`<span class="mp-v">${monthV?planFmt(shown,k.unit):"<span class='muted'>—</span>"}</span>`;
+            const monthV=planVal(p,k.kpi_key);
+            cell = editable
+              ? `<input class="mp-in" id="mp-in-${mi}-${k.kpi_key}" data-mi="${mi}" data-k="${k.kpi_key}" type="number" min="0" inputmode="numeric" value="${monthV||''}" placeholder="0">`
+              : `<span class="mp-v">${monthV?planFmt(monthV,k.unit):"<span class='muted'>—</span>"}</span>`;
+            const sc=(monthV&&k.unit!=='%')?`${planFmt(monthV/4.33,k.unit)}/sett · ${planFmt(monthV/WORKDAYS_MONTH,k.unit)}/g`:'';
+            sub=`<div class="mp-sub" id="mp-sub-${mi}-${k.kpi_key}">${sc}</div>`;
+            if(isCur && k.actual_kpi && monthV>0){ const r=actuals[k.kpi_key]||0; const pc=Math.min(100,Math.round(r/monthV*100)); live=`<div class="mp-bar"><i style="width:${pc}%;background:${pc>=Math.round(today().getDate()/WORKDAYS_MONTH*100)?'var(--brand)':'#e0a800'}"></i></div><small class="mp-real">${planFmt(r,k.unit)} reali</small>`; }
           }
-          // barra reale vs target nel mese corrente per KPI mappati
-          let live='';
-          if(isCur && k.actual_kpi && monthV>0){ const r=actuals[k.kpi_key]||0; const pc=Math.min(100,Math.round(r/monthV*100)); live=`<div class="mp-bar"><i style="width:${pc}%;background:${pc>=Math.round(today().getDate()/WORKDAYS_MONTH*100)?'var(--brand)':'#e0a800'}"></i></div><small class="mp-real">${planFmt(actuals[k.kpi_key]||0,k.unit)} reali</small>`; }
-          html+=`<td class="${isCur?'mp-cur':''}">${cell}${live}</td>`;
+          html+=`<td class="${isCur?'mp-cur':''}">${cell}${sub}${live}</td>`;
         });
         html+=`</tr>`;
       });
@@ -508,10 +565,14 @@ async function viewMarketingPlan(c,editable){
     html+=`</tbody></table></div>`;
     body.innerHTML=html;
     if(editable){
-      // ricalcolo derivati live mentre digiti (solo modalità mese: mostro toast riepilogo non serve, ma aggiorno barra fatturato banner se è il mese corrente)
-      $$('.mp-in',body).forEach(inp=>inp.addEventListener('input',()=>{ /* valore tenuto negli input, salvataggio legge da DOM */ }));
-      // azioni admin sui KPI
+      $$('.mp-in',body).forEach(inp=>inp.addEventListener('input',()=>{
+        const mi=+inp.dataset.mi, key=inp.dataset.k, v=+inp.value||0; const kk=kpis.find(x=>x.kpi_key===key);
+        const sub=$('#mp-sub-'+mi+'-'+key,body); if(sub&&kk) sub.innerHTML=(v&&kk.unit!=='%')?`${planFmt(v/4.33,kk.unit)}/sett · ${planFmt(v/WORKDAYS_MONTH,kk.unit)}/g`:'';
+        const getv=k2=>{ const el=$('#mp-in-'+mi+'-'+k2,body); if(el)return +el.value||0; const p=plan.find(x=>+x.month.slice(5,7)-1===mi); return p?planVal(p,k2):0; };
+        kpis.filter(x=>x.kind==='calc').forEach(ck=>{ const span=$('#mp-c-'+mi+'-'+ck.kpi_key,body); if(span){ const r=planCalc(ck.formula,getv); span.innerHTML=r==null?"<span class='muted'>—</span>":Math.round(r*100)+'%'; }});
+      }));
       $$('.mp-tools button',body).forEach(b=>b.addEventListener('click',()=>handleKpiTool(b.dataset.act,b.dataset.k)));
+      $$('.mp-cattools button',body).forEach(b=>{ if(!b.disabled) b.addEventListener('click',()=>handleCatMove(b.dataset.cact,b.dataset.cat)); });
     }
   }
 
@@ -529,13 +590,22 @@ async function viewMarketingPlan(c,editable){
       kpis=kpis.filter(x=>x.kpi_key!==key); toast('KPI eliminato'); renderMatrix(); return;
     }
     if(act==='up'||act==='down'){
-      const flat=kpis.slice(); const i=flat.findIndex(x=>x.kpi_key===key); const j=act==='up'?i-1:i+1;
-      if(j<0||j>=flat.length)return;
-      const a=flat[i],b=flat[j]; const sa=a.sort,sb2=b.sort; a.sort=sb2; b.sort=sa;
-      kpis.sort((x,y)=>x.sort-y.sort);
-      if(!DEMO){ await sb.from('marketing_kpis').update({sort:a.sort}).eq('kpi_key',a.kpi_key); await sb.from('marketing_kpis').update({sort:b.sort}).eq('kpi_key',b.kpi_key); }
-      renderMatrix(); return;
+      // riordino DENTRO la stessa categoria (scambia i sort coi vicini di categoria)
+      const {byCat}=groupCats(); const grp=byCat[k.category]; const gi=grp.indexOf(k); const gj=act==='up'?gi-1:gi+1;
+      if(gj<0||gj>=grp.length)return;
+      const other=grp[gj]; const t=k.sort; k.sort=other.sort; other.sort=t;
+      kpis.sort((x,y)=>x.sort-y.sort); persistSorts([k,other]); renderMatrix(); return;
     }
+  }
+
+  // sposta un'intera categoria (sezione macro) su/giù — riassegna i sort a blocchi
+  function handleCatMove(dir,cat){
+    const {cats,byCat}=groupCats(); const i=cats.indexOf(cat); const j=dir==='up'?i-1:i+1;
+    if(j<0||j>=cats.length)return;
+    const order=cats.slice(); const tmp=order[i]; order[i]=order[j]; order[j]=tmp;
+    let s=10; const changed=[];
+    order.forEach(ct=>byCat[ct].forEach(k=>{ if(k.sort!==s){k.sort=s;changed.push(k);} s+=10; }));
+    kpis.sort((a,b)=>a.sort-b.sort); persistSorts(changed); renderMatrix();
   }
   renderMatrix();
 
@@ -546,7 +616,6 @@ async function viewMarketingPlan(c,editable){
     row.appendChild(save);row.appendChild(msg);c.appendChild(row);
     save.addEventListener('click',async()=>{
       if(DEMO){toast('Demo: salvataggio disattivato');return;}
-      if(PLAN_MODE!=='mese'){toast('Passa a «📅 Mese» per modificare gli obiettivi');return;}
       save.disabled=true;save.textContent='Salvo…';
       // leggi tutti gli input dalla matrice
       const valByMonth={}; plan.forEach(p=>valByMonth[p.month]={});
