@@ -226,3 +226,12 @@ input,select{font-family:inherit;font-size:14px}
 .mp-planrow input,.mp-planrow select{padding:8px 10px;border:1px solid var(--line);border-radius:9px;font:inherit;font-size:13px;min-width:96px;background:var(--surface);font-variant-numeric:tabular-nums}
 .mp-planrow input:focus,.mp-planrow select:focus{border-color:var(--brand);outline:none;box-shadow:0 0 0 3px var(--brand-soft)}
 .mp-planprev{background:var(--surface-2);border-radius:10px;padding:10px 12px;line-height:1.6}
+
+/* ---- Piano Marketing: drag&drop + mese selezionato ---- */
+.mp-grip{cursor:grab;color:var(--ink-3);font-size:13px;margin-right:6px;opacity:.5;user-select:none;display:inline-block}
+.mp-grip:hover{opacity:1;color:var(--ink)}
+.mp-grip:active{cursor:grabbing}
+.mp-kpirow.mp-drop-on>td,.mp-catrow.mp-drop-on>td{box-shadow:inset 0 2px 0 var(--brand);background:var(--brand-soft)!important}
+.mp-month-th{cursor:pointer;transition:background .12s}
+.mp-month-th:hover{background:var(--brand-soft)}
+.mp-grid td.mp-sel,.mp-grid th.mp-sel{background:rgba(22,163,74,.13)!important;box-shadow:inset 0 0 0 1.5px var(--brand)}

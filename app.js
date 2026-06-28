@@ -451,7 +451,7 @@ async function viewMarketingPlan(c,editable){
     bar.innerHTML=`<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
       <button class="btn btn-primary" id="mpPlanBtn">🎯 Pianifica un mese dal fatturato</button>
       <button class="btn btn-ghost" id="mpAddKpi">➕ Aggiungi KPI</button>
-      <span class="muted" style="font-size:12.5px">Riordina con ↑↓ · ✎ rinomina · 🗑 elimina. Compili i numeri, sett/giorno e i tassi % si calcolano da soli.</span></div>
+      <span class="muted" style="font-size:12.5px">Trascina ⠿ per riordinare KPI e sezioni · ✎ rinomina · 🗑 elimina. Compili i numeri, sett/giorno e i tassi % si calcolano da soli.</span></div>
       <div class="card" id="mpPlanForm" style="display:none;margin-bottom:12px">
         <div class="card-h"><h3>🎯 Pianifica il funnel da raggiungere</h3><span class="muted">Parti dal fatturato, scendi a tutti i KPI</span></div>
         <p class="muted" style="font-size:12.5px;margin:0 0 10px">Scegli il mese, imposta il <b>fatturato obiettivo</b> e i tassi attesi: l'app calcola a ritroso quante vendite, appuntamenti, chiamate e lead servono — e li scrive nel mese.</p>
@@ -524,30 +524,36 @@ async function viewMarketingPlan(c,editable){
 
   // gruppi categoria nell'ordine di sort corrente
   function groupCats(){ const cats=[]; const byCat={}; kpis.forEach(k=>{ if(!byCat[k.category]){byCat[k.category]=[];cats.push(k.category);} byCat[k.category].push(k); }); return {cats,byCat}; }
-  async function persistSorts(arr){ if(DEMO)return; for(const k of arr){ await sb.from('marketing_kpis').update({sort:k.sort}).eq('kpi_key',k.kpi_key); } }
+  async function persistKpis(arr){ if(DEMO)return; for(const k of arr){ await sb.from('marketing_kpis').update({sort:k.sort,category:k.category}).eq('kpi_key',k.kpi_key); } }
+  function applyOrder(newList){ let s=10; newList.forEach(k=>{k.sort=s;s+=10;}); kpis=newList; persistKpis(kpis); renderMatrix(); }
+  // calcola un valore di KPI calc, formattato nella sua unità (% → ratio×100; €/n → valore diretto)
+  function calcDisp(k,vget){ const r=planCalc(k.formula,vget); if(r==null)return "<span class='muted'>—</span>"; return k.unit==='%'?Math.round(r*100)+'%':planFmt(r,k.unit); }
+  let dragSubject=null, selMonth=null;
+  // click su un mese (header colonna o card) → evidenzia la colonna + apre il pianificatore su quel mese
+  function pickMonth(month){ selMonth=(selMonth===month?null:month); renderMatrix(); const f=$('#mpPlanForm',c); if(f&&selMonth){ f.style.display='block'; const s=$('#pfMonth',c); if(s)s.value=month; f.scrollIntoView({behavior:'smooth',block:'center'}); } }
 
-  // ---- render della matrice (KPI=righe, mesi=colonne) ----
+  // ---- render della matrice (KPI=righe, mesi=colonne) — drag&drop per riordinare ----
   function renderMatrix(){
     const body=$('#mpBody',c);
     if(!kpis.length){ body.innerHTML='<div class="empty">Nessun KPI ancora. '+(editable?'Aggiungine uno con «➕ Aggiungi KPI».':'')+'</div>'; return; }
     const {cats,byCat}=groupCats();
-    const monthHead=plan.map(p=>{const mi=+p.month.slice(5,7)-1;const isCur=mi===nowM;return `<th class="${isCur?'mp-cur':''}">${MESI_ABBR[mi]}${isCur?'<br><span class="mp-now">in corso</span>':p.estimated?'<br><span class="mp-est">stima</span>':''}</th>`;}).join('');
+    const monthHead=plan.map(p=>{const mi=+p.month.slice(5,7)-1;const isCur=mi===nowM;const sel=p.month===selMonth;return `<th class="mp-month-th ${isCur?'mp-cur':''} ${sel?'mp-sel':''}" data-month="${p.month}" title="Clicca per pianificare ${MESI_IT[mi]}">${MESI_ABBR[mi]}${isCur?'<br><span class="mp-now">in corso</span>':p.estimated?'<br><span class="mp-est">stima</span>':''}${sel?'<br><span class="mp-now">selezionato</span>':''}</th>`;}).join('');
     let html=`<div class="card mp-wrap" style="padding:0;overflow:auto"><table class="mp-grid"><thead><tr><th class="mp-kpi">KPI <span class="muted" style="font-weight:500">/ mese · sett · giorno</span></th>${monthHead}</tr></thead><tbody>`;
     cats.forEach((cat,ci)=>{
-      const catTools = editable ? `<span class="mp-cattools"><button data-cact="up" data-cat="${cat}" title="sposta sezione su" ${ci===0?'disabled':''}>↑</button><button data-cact="down" data-cat="${cat}" title="sposta sezione giù" ${ci===cats.length-1?'disabled':''}>↓</button></span>` : '';
-      html+=`<tr class="mp-cathead"><td colspan="${plan.length+1}"><span class="mp-catname">${cat}</span>${catTools}</td></tr>`;
+      const catGrip = editable ? `<span class="mp-grip" draggable="true" data-cat="${cat}" title="Trascina per spostare la sezione">⠿</span>` : '';
+      html+=`<tr class="mp-cathead mp-catrow" data-cat="${cat}"><td colspan="${plan.length+1}">${catGrip}<span class="mp-catname">${cat}</span></td></tr>`;
       byCat[cat].forEach((k,gi)=>{
         const isLegacy=PLAN_LEGACY.includes(k.kpi_key); const isCalc=k.kind==='calc';
         const acts = k.actual_kpi ? '<span class="mp-live" title="ha un dato reale dal tracker">● live</span>' : (isCalc?'<span class="mp-auto" title="si calcola da solo dagli altri KPI">∑ auto</span>':'');
-        const adminTools = editable ? `<span class="mp-tools"><button data-act="up" data-k="${k.kpi_key}" title="su" ${gi===0?'disabled':''}>↑</button><button data-act="down" data-k="${k.kpi_key}" title="giù" ${gi===byCat[cat].length-1?'disabled':''}>↓</button><button data-act="ren" data-k="${k.kpi_key}" title="rinomina">✎</button>${isLegacy?'':`<button data-act="del" data-k="${k.kpi_key}" title="elimina">🗑</button>`}</span>` : '';
-        html+=`<tr><td class="mp-kpi"><div class="mp-klabel"><b>${k.label}</b> <span class="mp-unit">${k.unit}</span> ${acts}</div>${k.source?`<small class="muted">fonte: ${k.source}</small>`:''}${adminTools}</td>`;
+        const grip = editable ? `<span class="mp-grip" draggable="true" data-k="${k.kpi_key}" title="Trascina per spostare il KPI">⠿</span>` : '';
+        const adminTools = editable ? `<span class="mp-tools"><button data-act="ren" data-k="${k.kpi_key}" title="rinomina">✎</button>${isLegacy?'':`<button data-act="del" data-k="${k.kpi_key}" title="elimina">🗑</button>`}</span>` : '';
+        html+=`<tr class="mp-kpirow" data-k="${k.kpi_key}"><td class="mp-kpi"><div class="mp-klabel">${grip}<b>${k.label}</b> <span class="mp-unit">${k.unit}</span> ${acts}</div>${k.source?`<small class="muted">fonte: ${k.source}</small>`:''}${adminTools}</td>`;
         plan.forEach(p=>{
           const mi=+p.month.slice(5,7)-1; const isCur=mi===nowM;
           let cell, sub='', live='';
           if(isCalc){
-            const ratio=planCalc(k.formula,kk=>planVal(p,kk));
-            cell=`<span class="mp-v mp-calc" id="mp-c-${mi}-${k.kpi_key}">${ratio==null?"<span class='muted'>—</span>":Math.round(ratio*100)+'%'}</span>`;
-            if(isCur){ const rr=planCalc(k.formula,kk=>actuals[kk]||0); if(rr!=null) live=`<small class="mp-real">${Math.round(rr*100)}% reale</small>`; }
+            cell=`<span class="mp-v mp-calc" id="mp-c-${mi}-${k.kpi_key}">${calcDisp(k,kk=>planVal(p,kk))}</span>`;
+            if(isCur){ const rr=planCalc(k.formula,kk=>actuals[kk]||0); if(rr!=null) live=`<small class="mp-real">${k.unit==='%'?Math.round(rr*100)+'%':planFmt(rr,k.unit)} reale</small>`; }
           } else {
             const monthV=planVal(p,k.kpi_key);
             cell = editable
@@ -557,22 +563,48 @@ async function viewMarketingPlan(c,editable){
             sub=`<div class="mp-sub" id="mp-sub-${mi}-${k.kpi_key}">${sc}</div>`;
             if(isCur && k.actual_kpi && monthV>0){ const r=actuals[k.kpi_key]||0; const pc=Math.min(100,Math.round(r/monthV*100)); live=`<div class="mp-bar"><i style="width:${pc}%;background:${pc>=Math.round(today().getDate()/WORKDAYS_MONTH*100)?'var(--brand)':'#e0a800'}"></i></div><small class="mp-real">${planFmt(r,k.unit)} reali</small>`; }
           }
-          html+=`<td class="${isCur?'mp-cur':''}">${cell}${sub}${live}</td>`;
+          html+=`<td class="${isCur?'mp-cur':''} ${p.month===selMonth?'mp-sel':''}">${cell}${sub}${live}</td>`;
         });
         html+=`</tr>`;
       });
     });
     html+=`</tbody></table></div>`;
     body.innerHTML=html;
+    // click mese → evidenzia colonna + planner
+    $$('.mp-month-th',body).forEach(th=>th.addEventListener('click',()=>pickMonth(th.dataset.month)));
     if(editable){
       $$('.mp-in',body).forEach(inp=>inp.addEventListener('input',()=>{
         const mi=+inp.dataset.mi, key=inp.dataset.k, v=+inp.value||0; const kk=kpis.find(x=>x.kpi_key===key);
         const sub=$('#mp-sub-'+mi+'-'+key,body); if(sub&&kk) sub.innerHTML=(v&&kk.unit!=='%')?`${planFmt(v/4.33,kk.unit)}/sett · ${planFmt(v/WORKDAYS_MONTH,kk.unit)}/g`:'';
         const getv=k2=>{ const el=$('#mp-in-'+mi+'-'+k2,body); if(el)return +el.value||0; const p=plan.find(x=>+x.month.slice(5,7)-1===mi); return p?planVal(p,k2):0; };
-        kpis.filter(x=>x.kind==='calc').forEach(ck=>{ const span=$('#mp-c-'+mi+'-'+ck.kpi_key,body); if(span){ const r=planCalc(ck.formula,getv); span.innerHTML=r==null?"<span class='muted'>—</span>":Math.round(r*100)+'%'; }});
+        kpis.filter(x=>x.kind==='calc').forEach(ck=>{ const span=$('#mp-c-'+mi+'-'+ck.kpi_key,body); if(span) span.innerHTML=calcDisp(ck,getv); });
       }));
       $$('.mp-tools button',body).forEach(b=>b.addEventListener('click',()=>handleKpiTool(b.dataset.act,b.dataset.k)));
-      $$('.mp-cattools button',body).forEach(b=>{ if(!b.disabled) b.addEventListener('click',()=>handleCatMove(b.dataset.cact,b.dataset.cat)); });
+      // DRAG & DROP
+      $$('.mp-grip',body).forEach(g=>{
+        g.addEventListener('dragstart',e=>{ dragSubject=g.dataset.k?{type:'kpi',id:g.dataset.k}:{type:'cat',id:g.dataset.cat}; try{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',dragSubject.id);}catch(_){} });
+        g.addEventListener('dragend',()=>{ dragSubject=null; $$('.mp-drop-on',body).forEach(x=>x.classList.remove('mp-drop-on')); });
+      });
+      $$('.mp-kpirow,.mp-catrow',body).forEach(tr=>{
+        tr.addEventListener('dragover',e=>{ if(!dragSubject)return; e.preventDefault(); $$('.mp-drop-on',body).forEach(x=>x.classList.remove('mp-drop-on')); tr.classList.add('mp-drop-on'); });
+        tr.addEventListener('dragleave',()=>tr.classList.remove('mp-drop-on'));
+        tr.addEventListener('drop',e=>{ e.preventDefault(); tr.classList.remove('mp-drop-on'); const zone=tr.classList.contains('mp-catrow')?'cat':'kpi'; const id=tr.dataset.cat||tr.dataset.k; dndDrop(zone,id); });
+      });
+    }
+  }
+  function dndDrop(zone,id){
+    const d=dragSubject; dragSubject=null; if(!d)return;
+    const {cats,byCat}=groupCats();
+    if(d.type==='kpi'){
+      const src=kpis.find(x=>x.kpi_key===d.id); if(!src)return; const l=kpis.slice();
+      if(zone==='kpi'){ const tgt=l.find(x=>x.kpi_key===id); if(!tgt||tgt===src)return; src.category=tgt.category; l.splice(l.indexOf(src),1); l.splice(l.indexOf(tgt),0,src); }
+      else { src.category=id; l.splice(l.indexOf(src),1); let last=-1; l.forEach((k,i)=>{if(k.category===id)last=i;}); l.splice(last+1,0,src); }
+      applyOrder(l); return;
+    }
+    if(d.type==='cat'){
+      const tgtCat=zone==='cat'?id:(kpis.find(x=>x.kpi_key===id)||{}).category; if(d.id===tgtCat||cats.indexOf(tgtCat)<0)return;
+      const co=cats.slice(); co.splice(co.indexOf(d.id),1); co.splice(co.indexOf(tgtCat),0,d.id);
+      const l=[]; co.forEach(ct=>byCat[ct].forEach(k=>l.push(k))); applyOrder(l);
     }
   }
 
@@ -589,23 +621,6 @@ async function viewMarketingPlan(c,editable){
       if(!DEMO){const {error}=await sb.from('marketing_kpis').update({active:false}).eq('kpi_key',key); if(error){toast('Errore: '+error.message);return;}}
       kpis=kpis.filter(x=>x.kpi_key!==key); toast('KPI eliminato'); renderMatrix(); return;
     }
-    if(act==='up'||act==='down'){
-      // riordino DENTRO la stessa categoria (scambia i sort coi vicini di categoria)
-      const {byCat}=groupCats(); const grp=byCat[k.category]; const gi=grp.indexOf(k); const gj=act==='up'?gi-1:gi+1;
-      if(gj<0||gj>=grp.length)return;
-      const other=grp[gj]; const t=k.sort; k.sort=other.sort; other.sort=t;
-      kpis.sort((x,y)=>x.sort-y.sort); persistSorts([k,other]); renderMatrix(); return;
-    }
-  }
-
-  // sposta un'intera categoria (sezione macro) su/giù — riassegna i sort a blocchi
-  function handleCatMove(dir,cat){
-    const {cats,byCat}=groupCats(); const i=cats.indexOf(cat); const j=dir==='up'?i-1:i+1;
-    if(j<0||j>=cats.length)return;
-    const order=cats.slice(); const tmp=order[i]; order[i]=order[j]; order[j]=tmp;
-    let s=10; const changed=[];
-    order.forEach(ct=>byCat[ct].forEach(k=>{ if(k.sort!==s){k.sort=s;changed.push(k);} s+=10; }));
-    kpis.sort((a,b)=>a.sort-b.sort); persistSorts(changed); renderMatrix();
   }
   renderMatrix();
 
