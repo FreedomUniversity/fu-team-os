@@ -238,3 +238,9 @@ input,select{font-family:inherit;font-size:14px}
 .mp-sub-row .mp-klabel b{font-weight:600;font-size:13px;color:var(--ink-2)}
 .mp-arrow{color:var(--ink-3);margin-right:3px}
 .mp-sub-row{padding-left:14px!important}
+
+/* ---- modalità EMBED (dentro il Cervellone): niente sidebar OS, solo contenuto ---- */
+.embed .app{grid-template-columns:1fr}
+.embed .sidebar{display:none!important}
+.embed .topbar,.embed .burger,.embed .scrim{display:none!important}
+.embed main,.embed .main{padding-top:18px}

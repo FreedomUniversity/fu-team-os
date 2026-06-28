@@ -71,6 +71,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_ANON, {auth:{persistSession:true,
 
 /* ---------- DEMO MODE (solo dati finti, nessun accesso DB — per anteprima/QA) ---------- */
 const DEMO = new URLSearchParams(location.search).get('demo');
+const EMBED = new URLSearchParams(location.search).get('embed'); if(EMBED){ try{document.documentElement.classList.add('embed');}catch(e){} }
 function demoFixtures(){
   const t=new Date(), ms=new Date(t.getFullYear(),t.getMonth(),1);
   const days=[]; for(let d=new Date(ms);d<=t;d.setDate(d.getDate()+1)){if(d.getDay()===0)continue;
