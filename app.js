@@ -391,7 +391,7 @@ function planEur(v){return '€'+nf.format(Math.round(v||0));}
 function planFmt(v,unit){return unit==='€'?planEur(v):unit==='%'?(Math.round((v||0)*10)/10+'%'):nf.format(Math.round((v||0)*10)/10);}
 function planVal(p,key){ const v=p&&p.values&&p.values[key]; if(v!=null&&v!=='') return +v||0; return +((p||{})[key])||0; } // values jsonb con fallback colonna legacy
 // KPI calcolato (kind=calc): formula "num/den" → ratio 0-1 (null se denom 0). vget(key) ritorna il valore di un altro KPI.
-function planCalc(formula,vget){ if(!formula)return null; const m=formula.split('/'); const den=+vget(m[1].trim())||0; if(!den)return null; return (+vget(m[0].trim())||0)/den; }
+function planCalc(formula,vget){ if(!formula)return null; if(formula.indexOf('+')>=0){ return formula.split('+').reduce((a,k)=>a+(+vget(k.trim())||0),0); } const m=formula.split('/'); const den=+vget(m[1].trim())||0; if(!den)return null; return (+vget(m[0].trim())||0)/den; }
 // derivati automatici mese→settimana→giorno (solo per KPI numerici assoluti, non per i tassi %)
 function planSubHtml(monthVal,unit){ if(unit==='%'||!monthVal) return ''; return `<div class="mp-sub">${planFmt(monthVal/4.33,unit)}/sett · ${planFmt(monthVal/WORKDAYS_MONTH,unit)}/g</div>`; }
 
@@ -404,9 +404,12 @@ async function viewMarketingPlan(c,editable){
   if(DEMO){
     kpis=[{kpi_key:'fatturato',label:'Fatturato',unit:'€',category:'Risultato',source:'Pipedrive',actual_kpi:'cash_collected',actual_role:'closer',kind:'number',sort:10},
       {kpi_key:'conversioni',label:'Conversioni (corsisti)',unit:'n',category:'Risultato',source:'Pipedrive',actual_kpi:'vinti',actual_role:'closer',kind:'number',sort:15},
-      {kpi_key:'lead',label:'Lead',unit:'n',category:'Acquisizione',source:'Meta/Google',kind:'number',sort:22},
+      {kpi_key:'lead',label:'Lead',unit:'n',category:'Acquisizione',kind:'calc',formula:'lead_ba+lead_paid+lead_social',sort:22},
+      {kpi_key:'lead_ba',label:'Lead Brand Ambassador',unit:'n',category:'Acquisizione',source:'BA reparto',kind:'number',sub:true,sort:23},
+      {kpi_key:'lead_paid',label:'Lead Paid ADV',unit:'n',category:'Acquisizione',source:'Meta/Google',kind:'number',sub:true,sort:24},
+      {kpi_key:'lead_social',label:'Lead Social',unit:'n',category:'Acquisizione',source:'Social organico',kind:'number',sub:true,sort:25},
       {kpi_key:'budget_adv',label:'Budget ADV',unit:'€',category:'Acquisizione',source:'Meta',kind:'number',sort:25},
-      {kpi_key:'cpl',label:'CPL',unit:'€',category:'Acquisizione',kind:'calc',formula:'budget_adv/lead',sort:28},
+      {kpi_key:'cpl',label:'CPL',unit:'€',category:'Acquisizione',kind:'calc',formula:'budget_adv/lead_paid',sort:28},
       {kpi_key:'call',label:'Chiamate effettuate',unit:'n',category:'Vendita',source:'CloudTalk',actual_kpi:'chiamate_effettuate',actual_role:'setter',kind:'number',sort:40},
       {kpi_key:'chiamate_risposte',label:'Chiamate risposte',unit:'n',category:'Vendita',source:'CloudTalk',actual_kpi:'chiamate_risposte',actual_role:'setter',kind:'number',sort:43},
       {kpi_key:'tasso_risposta',label:'Tasso risposta',unit:'%',category:'Vendita',kind:'calc',formula:'chiamate_risposte/call',sort:46},
@@ -414,7 +417,7 @@ async function viewMarketingPlan(c,editable){
       {kpi_key:'appuntamenti_processati',label:'Appuntamenti processati',unit:'n',category:'Vendita',source:'CloudTalk',actual_kpi:'presentati',actual_role:'closer',kind:'number',sort:55},
       {kpi_key:'show_up_rate',label:'Show-up rate',unit:'%',category:'Vendita',kind:'calc',formula:'appuntamenti_processati/appuntamenti',sort:58},
       {kpi_key:'tasso_conversione',label:'Tasso conversione',unit:'%',category:'Vendita',kind:'calc',formula:'conversioni/appuntamenti_processati',sort:62}];
-    plan=[{month:'2026-06-01',estimated:false,values:{fatturato:70000,conversioni:35,lead:1400,budget_adv:4800,call:1400,chiamate_risposte:560,appuntamenti:120,appuntamenti_processati:84}},
+    plan=[{month:'2026-06-01',estimated:false,values:{fatturato:70000,conversioni:35,lead_ba:300,lead_paid:900,lead_social:200,budget_adv:4800,call:1400,chiamate_risposte:560,appuntamenti:120,appuntamenti_processati:84}},
       {month:'2026-07-01',estimated:true,values:{fatturato:80000}},{month:'2026-08-01',estimated:true,values:{fatturato:60000}},
       {month:'2026-09-01',estimated:true,values:{fatturato:90000}},{month:'2026-10-01',estimated:true,values:{}},
       {month:'2026-11-01',estimated:true,values:{}},{month:'2026-12-01',estimated:true,values:{}}];
@@ -490,7 +493,7 @@ async function viewMarketingPlan(c,editable){
       const effettuate=resp?Math.round(risposte/(resp/100)):0;
       const lead=effettuate; // ogni lead entra in cadenza chiamate
       const budget=Math.round(lead*cpl);
-      return {fatturato:fatt,conversioni,appuntamenti_processati:processati,appuntamenti:fissati,chiamate_risposte:risposte,call:effettuate,lead,budget_adv:budget};
+      return {fatturato:fatt,conversioni,appuntamenti_processati:processati,appuntamenti:fissati,chiamate_risposte:risposte,call:effettuate,lead_paid:lead,budget_adv:budget};
     }
     function pfRender(){
       const r=pfCalc(); const box=$('#pfPreview',c); if(!r){box.innerHTML='Inserisci fatturato e valore medio corsista per vedere il funnel.';return;}
@@ -547,7 +550,7 @@ async function viewMarketingPlan(c,editable){
         const acts = k.actual_kpi ? '<span class="mp-live" title="ha un dato reale dal tracker">● live</span>' : (isCalc?'<span class="mp-auto" title="si calcola da solo dagli altri KPI">∑ auto</span>':'');
         const grip = editable ? `<span class="mp-grip" draggable="true" data-k="${k.kpi_key}" title="Trascina per spostare il KPI">⠿</span>` : '';
         const adminTools = editable ? `<span class="mp-tools"><button data-act="ren" data-k="${k.kpi_key}" title="rinomina">✎</button>${isLegacy?'':`<button data-act="del" data-k="${k.kpi_key}" title="elimina">🗑</button>`}</span>` : '';
-        html+=`<tr class="mp-kpirow" data-k="${k.kpi_key}"><td class="mp-kpi"><div class="mp-klabel">${grip}<b>${k.label}</b> <span class="mp-unit">${k.unit}</span> ${acts}</div>${k.source?`<small class="muted">fonte: ${k.source}</small>`:''}${adminTools}</td>`;
+        html+=`<tr class="mp-kpirow" data-k="${k.kpi_key}"><td class="mp-kpi ${k.sub?'mp-sub-row':''}"><div class="mp-klabel">${grip}${k.sub?'<span class="mp-arrow">↳</span>':''}<b>${k.label}</b> <span class="mp-unit">${k.unit}</span> ${acts}</div>${k.source?`<small class="muted">fonte: ${k.source}</small>`:''}${adminTools}</td>`;
         plan.forEach(p=>{
           const mi=+p.month.slice(5,7)-1; const isCur=mi===nowM;
           let cell, sub='', live='';

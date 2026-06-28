@@ -235,3 +235,6 @@ input,select{font-family:inherit;font-size:14px}
 .mp-month-th{cursor:pointer;transition:background .12s}
 .mp-month-th:hover{background:var(--brand-soft)}
 .mp-grid td.mp-sel,.mp-grid th.mp-sel{background:rgba(22,163,74,.13)!important;box-shadow:inset 0 0 0 1.5px var(--brand)}
+.mp-sub-row .mp-klabel b{font-weight:600;font-size:13px;color:var(--ink-2)}
+.mp-arrow{color:var(--ink-3);margin-right:3px}
+.mp-sub-row{padding-left:14px!important}
