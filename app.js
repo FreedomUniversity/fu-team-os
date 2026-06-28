@@ -83,6 +83,7 @@ const S = { user:null, profile:null, role:null, isAdmin:false, isManager:false, 
 
 /* ---------- HELPERS ---------- */
 const $ = (s,r=document)=>r.querySelector(s);
+const $$ = (s,r=document)=>Array.from(r.querySelectorAll(s));
 const el = (tag,cls,html)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(html!=null)e.innerHTML=html;return e;};
 const nf = new Intl.NumberFormat('it-IT');
 const fmtv = (v,unit)=> unit==='€' ? '€'+nf.format(Math.round(v)) : unit==='%' ? Math.round(v)+'%' : unit==='bool' ? (v>=1?'Sì':'No') : nf.format(Math.round(v));
@@ -383,64 +384,179 @@ async function viewTargets(c){
 
 /* ---------- PIANO MARKETING (giu→dic) — visibile a tutti, editabile admin ---------- */
 const MESI_IT=['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
-const PLAN_METRICS=[{k:'fatturato',label:'Fatturato',unit:'€'},{k:'lead',label:'Lead',unit:'n'},{k:'appuntamenti',label:'Appuntamenti',unit:'n'},{k:'call',label:'Call',unit:'n'}];
+const MESI_ABBR=['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
+const PLAN_UNITS=['€','n','%'];
+const PLAN_LEGACY=['fatturato','lead','appuntamenti','call']; // colonne fisiche su marketing_plan (retrocompat NOT NULL)
+let PLAN_MODE='mese'; // mese | sett | giorno
 function planEur(v){return '€'+nf.format(Math.round(v||0));}
-function planFmt(v,unit){return unit==='€'?planEur(v):nf.format(Math.round((v||0)*10)/10);}
+function planFmt(v,unit){return unit==='€'?planEur(v):unit==='%'?(Math.round((v||0)*10)/10+'%'):nf.format(Math.round((v||0)*10)/10);}
+function planVal(p,key){ const v=p&&p.values&&p.values[key]; if(v!=null&&v!=='') return +v||0; return +((p||{})[key])||0; } // values jsonb con fallback colonna legacy
+function planDeriv(monthVal,mode){ return mode==='sett'? monthVal/4.33 : mode==='giorno'? monthVal/WORKDAYS_MONTH : monthVal; }
+
 async function viewMarketingPlan(c,editable){
   c.innerHTML=`<div class="page-head"><div><h1>🗺️ Piano Marketing <span class="muted" style="font-size:15px">giu → dic 2026</span></h1>
-    <p class="sub">L'ingranaggio del fatturato: obiettivo <b>mensile → settimanale → giornaliero</b> per fatturato, lead, appuntamenti e call. ${editable?'Tu lo imposti, il team lo vede.':'Sola lettura — lo impostano gli admin.'}</p></div></div>
-    <div id="mpWhere"></div><div id="mpBody"><div class="empty">Carico…</div></div>`;
-  let plan;
-  if(DEMO){ plan=[{month:'2026-06-01',fatturato:70000,lead:350,appuntamenti:120,call:600,estimated:false},{month:'2026-07-01',fatturato:80000,lead:0,appuntamenti:0,call:0,estimated:true},{month:'2026-08-01',fatturato:60000,lead:0,appuntamenti:0,call:0,estimated:true}]; }
-  else { const {data}=await sb.from('marketing_plan').select('*').order('month'); plan=data||[]; }
-  let actualCash=0, anyEntry=false;
-  if(!DEMO){ const ms=isoDay(monthStart()); const {data:ent}=await sb.from('os_entries').select('day,kpis,role').gte('day',ms); (ent||[]).forEach(e=>{anyEntry=true; if(e.role==='closer') actualCash+=+(e.kpis?.cash_collected||0);}); }
+    <p class="sub">L'ingranaggio del fatturato: i mesi scorrono <b>da sinistra a destra</b>, i KPI sono le righe. ${editable?'Aggiungi i KPI che vuoi inseguire, imposta gli obiettivi mensili — il team li vede.':'Sola lettura — li impostano gli admin.'}</p></div>
+    <div class="seg" id="mpMode" style="align-self:flex-start"></div></div>
+    <div id="mpWhere"></div><div id="mpBar"></div><div id="mpBody"><div class="empty">Carico…</div></div>`;
+  // toggle Mese/Settimana/Giorno
+  const modes=[['mese','📅 Mese'],['sett','🗓️ Settimana'],['giorno','📆 Giorno']];
+  $('#mpMode',c).innerHTML=modes.map(([v,l])=>`<button data-m="${v}" class="${PLAN_MODE===v?'on':''}">${l}</button>`).join('');
+  $('#mpMode',c).addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;PLAN_MODE=b.dataset.m;$$('#mpMode button',c).forEach(x=>x.classList.toggle('on',x.dataset.m===PLAN_MODE));renderMatrix();});
+
+  let kpis, plan;
+  if(DEMO){
+    kpis=[{kpi_key:'fatturato',label:'Fatturato',unit:'€',category:'Risultato',source:'Pipedrive',actual_kpi:'cash_collected',actual_role:'closer',sort:10},
+      {kpi_key:'lead',label:'Lead',unit:'n',category:'Acquisizione',source:'Meta/Google',sort:20},
+      {kpi_key:'lead_meta',label:'Lead Meta',unit:'n',category:'Acquisizione',source:'Meta',sort:21},
+      {kpi_key:'appuntamenti',label:'Appuntamenti fissati',unit:'n',category:'Vendita',source:'CloudTalk',actual_kpi:'fissati',actual_role:'setter',sort:30},
+      {kpi_key:'call',label:'Call',unit:'n',category:'Vendita',source:'CloudTalk',actual_kpi:'chiamate_effettuate',actual_role:'setter',sort:40}];
+    plan=[{month:'2026-06-01',estimated:false,values:{fatturato:70000,lead:350,lead_meta:240,appuntamenti:120,call:600}},
+      {month:'2026-07-01',estimated:true,values:{fatturato:80000}},{month:'2026-08-01',estimated:true,values:{fatturato:60000}},
+      {month:'2026-09-01',estimated:true,values:{fatturato:90000}},{month:'2026-10-01',estimated:true,values:{}},
+      {month:'2026-11-01',estimated:true,values:{}},{month:'2026-12-01',estimated:true,values:{}}];
+  } else {
+    const [{data:kd},{data:pd}]=await Promise.all([
+      sb.from('marketing_kpis').select('*').eq('active',true).order('sort'),
+      sb.from('marketing_plan').select('*').order('month')]);
+    kpis=kd||[]; plan=pd||[];
+  }
+  // reale del mese corrente per i KPI mappati a os_entries
+  const actuals={}; let anyEntry=false;
+  if(!DEMO){
+    const ms=isoDay(monthStart());
+    const {data:ent}=await sb.from('os_entries').select('day,kpis,role').gte('day',ms);
+    (ent||[]).forEach(e=>{anyEntry=true; kpis.forEach(k=>{ if(k.actual_kpi&&(!k.actual_role||e.role===k.actual_role)) actuals[k.kpi_key]=(actuals[k.kpi_key]||0)+(+(e.kpis?.[k.actual_kpi]||0)); });});
+  }
   const nowM=today().getMonth();
   const cur=plan.find(p=>+p.month.slice(5,7)===nowM+1);
+  // banner "Dove siamo" sul KPI Fatturato
   const wbox=$('#mpWhere',c);
   if(cur){
-    const tgt=+cur.fatturato||0; const pct=tgt?Math.min(100,Math.round(actualCash/tgt*100)):0;
+    const tgt=planVal(cur,'fatturato'); const real=actuals['fatturato']||0; const pct=tgt?Math.min(100,Math.round(real/tgt*100)):0;
     const dayN=today().getDate(); const expPct=Math.round(dayN/WORKDAYS_MONTH*100);
     const bott = !anyEntry ? '⚠️ Nessuna compilazione ancora: l\'app non sa dove siamo davvero. Il piano resta teorico finché il team non segna i numeri ogni sera.' :
-      actualCash>=tgt*dayN/WORKDAYS_MONTH ? '✅ In ritmo col mese.' : '🔴 Sotto ritmo: a oggi servirebbe ~'+planEur(tgt*dayN/WORKDAYS_MONTH)+', siamo a '+planEur(actualCash)+'. Questo è il collo di bottiglia da spingere.';
-    wbox.innerHTML=`<div class="card" style="margin-bottom:16px"><div class="card-h"><h3>📍 Dove siamo — ${MESI_IT[nowM]}</h3><span class="muted">${planEur(actualCash)} / ${planEur(tgt)} (${pct}%)</span></div>
+      real>=tgt*dayN/WORKDAYS_MONTH ? '✅ In ritmo col mese sul fatturato.' : '🔴 Sotto ritmo: a oggi servirebbe ~'+planEur(tgt*dayN/WORKDAYS_MONTH)+', siamo a '+planEur(real)+'. Questo è il collo di bottiglia da spingere.';
+    wbox.innerHTML=`<div class="card" style="margin-bottom:16px"><div class="card-h"><h3>📍 Dove siamo — ${MESI_IT[nowM]}</h3><span class="muted">${planEur(real)} / ${planEur(tgt)} (${pct}%)</span></div>
       <div style="height:14px;background:var(--line);border-radius:8px;overflow:hidden;margin:4px 0 8px"><div style="height:100%;width:${pct}%;background:${pct>=expPct?'var(--brand)':'#e0a800'};transition:width .4s"></div></div>
       <p class="muted" style="margin:0">${bott}</p></div>`;
   }
-  const body=$('#mpBody',c); body.innerHTML='';
-  const inputs={};
-  plan.forEach(p=>{
-    const mi=+p.month.slice(5,7)-1; const isCur=mi===nowM;
-    const card=el('div','card'); card.style.cssText='margin-bottom:14px'+(isCur?';border:2px solid var(--brand)':'');
-    card.innerHTML=`<div class="card-h"><h3>${MESI_IT[mi]} 2026 ${isCur?'<span class="pill role">in corso</span>':''} ${p.estimated?'<span class="pill" style="background:#fff3cd;color:#9a6700">stima · da tarare</span>':''}</h3></div>`;
-    const grid=el('div'); grid.style.cssText='display:grid;grid-template-columns:1fr;gap:0';
-    PLAN_METRICS.forEach(m=>{
-      const val=+p[m.k]||0; const inId='mp_'+mi+'_'+m.k;
-      const inHtml = editable
-        ? `<div class="f-in" style="margin:0"><input id="${inId}" type="number" min="0" inputmode="numeric" value="${val}" style="width:120px"><span class="unit">${m.unit}</span></div>`
-        : `<b style="font-size:17px;min-width:90px;text-align:right">${planFmt(val,m.unit)}</b>`;
-      const row=el('div'); row.style.cssText='display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 0;border-top:1px solid var(--line)';
-      row.innerHTML=`<div style="flex:1;min-width:110px"><b>${m.label}</b><br><small class="muted">obiettivo mese</small></div>
-        ${inHtml}
-        <div style="text-align:right;min-width:84px"><div id="mw_${mi}_${m.k}" style="font-weight:600">${planFmt(val/4.33,m.unit)}</div><small class="muted">/ settimana</small></div>
-        <div style="text-align:right;min-width:74px"><div id="md_${mi}_${m.k}" style="font-weight:600">${planFmt(val/WORKDAYS_MONTH,m.unit)}</div><small class="muted">/ giorno</small></div>`;
-      grid.appendChild(row);
-      if(editable) inputs[inId]={mi,k:m.k,unit:m.unit};
-    });
-    card.appendChild(grid); body.appendChild(card);
-  });
+  // toolbar admin: aggiungi KPI
   if(editable){
-    Object.keys(inputs).forEach(id=>{
-      const {mi,k,unit}=inputs[id]; const inp=$('#'+id,c); if(!inp)return;
-      inp.addEventListener('input',()=>{const v=+inp.value||0; $('#mw_'+mi+'_'+k,c).textContent=planFmt(v/4.33,unit); $('#md_'+mi+'_'+k,c).textContent=planFmt(v/WORKDAYS_MONTH,unit);});
+    const bar=$('#mpBar',c);
+    bar.innerHTML=`<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+      <button class="btn btn-ghost" id="mpAddKpi">➕ Aggiungi KPI</button>
+      <span class="muted" style="font-size:12.5px">Riordina con ↑↓ · ✎ rinomina · 🗑 elimina. Le celle si compilano solo in modalità <b>Mese</b>.</span></div>
+      <div class="card" id="mpAddForm" style="display:none;margin-bottom:12px">
+        <div class="card-h"><h3>Nuovo KPI da inseguire</h3></div>
+        <div class="datectl" style="gap:10px;flex-wrap:wrap">
+          <input id="nkLabel" placeholder="Nome KPI (es. Call processate, Lead Meta…)" style="flex:2;min-width:200px;padding:9px 12px;border:1px solid var(--line);border-radius:10px">
+          <select id="nkUnit" style="padding:9px 11px;border:1px solid var(--line);border-radius:10px;font-weight:600">${PLAN_UNITS.map(u=>`<option value="${u}">${u==='€'?'€ euro':u==='%'?'% percent.':'n numero'}</option>`).join('')}</select>
+          <input id="nkCat" placeholder="Categoria (es. Acquisizione)" style="flex:1;min-width:150px;padding:9px 12px;border:1px solid var(--line);border-radius:10px">
+          <input id="nkSrc" placeholder="Fonte (es. Meta, Google…)" style="flex:1;min-width:130px;padding:9px 12px;border:1px solid var(--line);border-radius:10px">
+          <button class="btn btn-primary" id="nkCreate">Crea KPI</button>
+        </div>
+        <div id="nkMsg" class="muted" style="font-size:13px;margin-top:6px"></div></div>`;
+    $('#mpAddKpi',c).addEventListener('click',()=>{const f=$('#mpAddForm',c);f.style.display=f.style.display==='none'?'block':'none';});
+    $('#nkCreate',c).addEventListener('click',async()=>{
+      const label=$('#nkLabel',c).value.trim(); const unit=$('#nkUnit',c).value; const cat=$('#nkCat',c).value.trim()||'Generale'; const src=$('#nkSrc',c).value.trim()||null;
+      const msg=$('#nkMsg',c); if(!label){msg.style.color='var(--bad)';msg.textContent='Serve il nome.';return;}
+      if(DEMO){toast('Demo: creazione disattivata');return;}
+      const base=label.toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'').slice(0,40)||'kpi';
+      let key=base, n=2; while(kpis.some(k=>k.kpi_key===key)){key=base+'_'+n;n++;}
+      const sort=(Math.max(0,...kpis.map(k=>+k.sort||0))+10);
+      const {error}=await sb.from('marketing_kpis').insert({kpi_key:key,label,unit,category:cat,source:src,sort});
+      if(error){msg.style.color='var(--bad)';msg.textContent='Errore: '+error.message;return;}
+      kpis.push({kpi_key:key,label,unit,category:cat,source:src,sort}); kpis.sort((a,b)=>(a.sort-b.sort));
+      $('#nkLabel',c).value='';$('#nkCat',c).value='';$('#nkSrc',c).value='';
+      toast('KPI «'+label+'» aggiunto'); $('#mpAddForm',c).style.display='none'; renderMatrix();
     });
-    const row=el('div');row.style.cssText='display:flex;align-items:center;gap:12px;position:sticky;bottom:0;background:linear-gradient(transparent,var(--bg) 40%);padding:14px 0';
+  }
+
+  // ---- render della matrice (KPI=righe, mesi=colonne) ----
+  function renderMatrix(){
+    const body=$('#mpBody',c); const mode=PLAN_MODE;
+    if(!kpis.length){ body.innerHTML='<div class="empty">Nessun KPI ancora. '+(editable?'Aggiungine uno con «➕ Aggiungi KPI».':'')+'</div>'; return; }
+    // raggruppa per categoria preservando l'ordine sort
+    const cats=[]; const byCat={};
+    kpis.forEach(k=>{ if(!byCat[k.category]){byCat[k.category]=[];cats.push(k.category);} byCat[k.category].push(k); });
+    const monthHead=plan.map(p=>{const mi=+p.month.slice(5,7)-1;const isCur=mi===nowM;return `<th class="${isCur?'mp-cur':''}">${MESI_ABBR[mi]}${isCur?'<br><span class="mp-now">in corso</span>':p.estimated?'<br><span class="mp-est">stima</span>':''}</th>`;}).join('');
+    let html=`<div class="card mp-wrap" style="padding:0;overflow:auto"><table class="mp-grid"><thead><tr><th class="mp-kpi">KPI <span class="muted" style="font-weight:500">/ ${mode==='sett'?'settimana':mode==='giorno'?'giorno':'mese'}</span></th>${monthHead}</tr></thead><tbody>`;
+    cats.forEach(cat=>{
+      html+=`<tr class="mp-cathead"><td colspan="${plan.length+1}">${cat}</td></tr>`;
+      byCat[cat].forEach((k,idx)=>{
+        const isLegacy=PLAN_LEGACY.includes(k.kpi_key);
+        const acts = k.actual_kpi ? '<span class="mp-live" title="ha un dato reale dal tracker">● live</span>' : '';
+        const adminTools = editable ? `<span class="mp-tools"><button data-act="up" data-k="${k.kpi_key}" title="su">↑</button><button data-act="down" data-k="${k.kpi_key}" title="giù">↓</button><button data-act="ren" data-k="${k.kpi_key}" title="rinomina">✎</button>${isLegacy?'':`<button data-act="del" data-k="${k.kpi_key}" title="elimina">🗑</button>`}</span>` : '';
+        html+=`<tr><td class="mp-kpi"><div class="mp-klabel"><b>${k.label}</b> <span class="mp-unit">${k.unit}</span> ${acts}</div>${k.source?`<small class="muted">fonte: ${k.source}</small>`:''}${adminTools}</td>`;
+        plan.forEach(p=>{
+          const mi=+p.month.slice(5,7)-1; const isCur=mi===nowM;
+          const monthV=planVal(p,k.kpi_key); const shown=planDeriv(monthV,mode);
+          let cell;
+          if(editable && mode==='mese'){
+            cell=`<input class="mp-in" data-mi="${mi}" data-k="${k.kpi_key}" type="number" min="0" inputmode="numeric" value="${monthV||''}" placeholder="0">`;
+          } else {
+            cell=`<span class="mp-v">${monthV?planFmt(shown,k.unit):"<span class='muted'>—</span>"}</span>`;
+          }
+          // barra reale vs target nel mese corrente per KPI mappati
+          let live='';
+          if(isCur && k.actual_kpi && monthV>0){ const r=actuals[k.kpi_key]||0; const pc=Math.min(100,Math.round(r/monthV*100)); live=`<div class="mp-bar"><i style="width:${pc}%;background:${pc>=Math.round(today().getDate()/WORKDAYS_MONTH*100)?'var(--brand)':'#e0a800'}"></i></div><small class="mp-real">${planFmt(actuals[k.kpi_key]||0,k.unit)} reali</small>`; }
+          html+=`<td class="${isCur?'mp-cur':''}">${cell}${live}</td>`;
+        });
+        html+=`</tr>`;
+      });
+    });
+    html+=`</tbody></table></div>`;
+    body.innerHTML=html;
+    if(editable){
+      // ricalcolo derivati live mentre digiti (solo modalità mese: mostro toast riepilogo non serve, ma aggiorno barra fatturato banner se è il mese corrente)
+      $$('.mp-in',body).forEach(inp=>inp.addEventListener('input',()=>{ /* valore tenuto negli input, salvataggio legge da DOM */ }));
+      // azioni admin sui KPI
+      $$('.mp-tools button',body).forEach(b=>b.addEventListener('click',()=>handleKpiTool(b.dataset.act,b.dataset.k)));
+    }
+  }
+
+  async function handleKpiTool(act,key){
+    const k=kpis.find(x=>x.kpi_key===key); if(!k)return;
+    if(act==='ren'){
+      const nl=prompt('Nuovo nome per «'+k.label+'»:',k.label); if(nl==null||!nl.trim())return;
+      if(!DEMO){const {error}=await sb.from('marketing_kpis').update({label:nl.trim()}).eq('kpi_key',key); if(error){toast('Errore: '+error.message);return;}}
+      k.label=nl.trim(); toast('Rinominato'); renderMatrix(); return;
+    }
+    if(act==='del'){
+      if(PLAN_LEGACY.includes(key)){toast('KPI base: non eliminabile');return;}
+      if(!confirm('Eliminare il KPI «'+k.label+'» dal piano? Gli obiettivi inseriti per questo KPI verranno ignorati.'))return;
+      if(!DEMO){const {error}=await sb.from('marketing_kpis').update({active:false}).eq('kpi_key',key); if(error){toast('Errore: '+error.message);return;}}
+      kpis=kpis.filter(x=>x.kpi_key!==key); toast('KPI eliminato'); renderMatrix(); return;
+    }
+    if(act==='up'||act==='down'){
+      const flat=kpis.slice(); const i=flat.findIndex(x=>x.kpi_key===key); const j=act==='up'?i-1:i+1;
+      if(j<0||j>=flat.length)return;
+      const a=flat[i],b=flat[j]; const sa=a.sort,sb2=b.sort; a.sort=sb2; b.sort=sa;
+      kpis.sort((x,y)=>x.sort-y.sort);
+      if(!DEMO){ await sb.from('marketing_kpis').update({sort:a.sort}).eq('kpi_key',a.kpi_key); await sb.from('marketing_kpis').update({sort:b.sort}).eq('kpi_key',b.kpi_key); }
+      renderMatrix(); return;
+    }
+  }
+  renderMatrix();
+
+  // ---- salvataggio piano ----
+  if(editable){
+    const row=el('div');row.style.cssText='display:flex;align-items:center;gap:12px;position:sticky;bottom:0;background:linear-gradient(transparent,var(--bg) 40%);padding:14px 0;margin-top:6px';
     const save=el('button','btn btn-primary','💾 Salva piano'); const msg=el('span','muted');
     row.appendChild(save);row.appendChild(msg);c.appendChild(row);
     save.addEventListener('click',async()=>{
       if(DEMO){toast('Demo: salvataggio disattivato');return;}
+      if(PLAN_MODE!=='mese'){toast('Passa a «📅 Mese» per modificare gli obiettivi');return;}
       save.disabled=true;save.textContent='Salvo…';
-      const rows=plan.map(p=>{const mi=+p.month.slice(5,7)-1; const r={month:p.month,estimated:p.estimated,updated_at:new Date().toISOString()}; PLAN_METRICS.forEach(m=>{const inp=$('#mp_'+mi+'_'+m.k,c); r[m.k]=inp?+inp.value||0:(+p[m.k]||0);}); return r;});
+      // leggi tutti gli input dalla matrice
+      const valByMonth={}; plan.forEach(p=>valByMonth[p.month]={});
+      $$('.mp-in',c).forEach(inp=>{const mi=+inp.dataset.mi; const mon=plan.find(p=>+p.month.slice(5,7)-1===mi); if(mon) valByMonth[mon.month][inp.dataset.k]=+inp.value||0;});
+      const rows=plan.map(p=>{
+        const values={...(p.values||{}),...valByMonth[p.month]};
+        const r={month:p.month,estimated:p.estimated,values,updated_at:new Date().toISOString()};
+        PLAN_LEGACY.forEach(lk=>{ r[lk]=values[lk]!=null?+values[lk]||0:planVal(p,lk); }); // mantieni colonne legacy coerenti
+        p.values=values; return r;
+      });
       const {error}=await sb.from('marketing_plan').upsert(rows,{onConflict:'month'});
       save.disabled=false;save.textContent='💾 Salva piano';
       if(error){msg.style.color='var(--bad)';msg.textContent='Errore: '+error.message;return;}

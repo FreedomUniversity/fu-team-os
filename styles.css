@@ -184,3 +184,28 @@ input,select{font-family:inherit;font-size:14px}
 .anchip{font:inherit;font-size:12.5px;font-weight:700;padding:7px 13px;border:1px solid var(--line);border-radius:99px;background:var(--surface);color:var(--ink-2);cursor:pointer;transition:all .15s}
 .anchip:hover{border-color:var(--brand)}
 .anchip.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+
+/* ---- Piano Marketing: matrice mesi-colonne ---- */
+.mp-wrap{margin-bottom:14px}
+.mp-grid{border-collapse:separate;border-spacing:0;width:100%;font-size:13.5px}
+.mp-grid th,.mp-grid td{padding:9px 10px;text-align:center;border-bottom:1px solid var(--line);white-space:nowrap}
+.mp-grid thead th{position:sticky;top:0;background:var(--surface);z-index:3;font-size:12.5px;color:var(--ink-2);font-weight:700;border-bottom:2px solid var(--line)}
+.mp-grid th.mp-kpi,.mp-grid td.mp-kpi{position:sticky;left:0;background:var(--surface);z-index:2;text-align:left;min-width:184px;max-width:240px;white-space:normal;box-shadow:1px 0 0 var(--line)}
+.mp-grid thead th.mp-kpi{z-index:4}
+.mp-grid td.mp-cur,.mp-grid th.mp-cur{background:var(--brand-soft)}
+.mp-grid thead th.mp-cur{background:linear-gradient(var(--surface),var(--brand-soft))}
+.mp-now{font-size:10px;font-weight:800;color:var(--brand);letter-spacing:.02em}
+.mp-est{font-size:10px;font-weight:700;color:#9a6700}
+.mp-cathead td{background:var(--surface-2);text-align:left;font-weight:800;font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);padding:7px 12px;position:sticky;left:0}
+.mp-klabel{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.mp-unit{font-size:11px;font-weight:700;color:var(--ink-3);background:var(--surface-2);border-radius:5px;padding:1px 5px}
+.mp-live{font-size:10px;font-weight:800;color:var(--brand)}
+.mp-v{font-weight:600;font-variant-numeric:tabular-nums}
+.mp-in{width:88px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:13px;text-align:right;font-variant-numeric:tabular-nums;background:var(--surface)}
+.mp-in:focus{border-color:var(--brand);outline:none;box-shadow:0 0 0 3px var(--brand-soft)}
+.mp-bar{height:5px;background:var(--line);border-radius:3px;overflow:hidden;margin:5px 2px 2px}
+.mp-bar > i{display:block;height:100%;transition:width .4s}
+.mp-real{display:block;font-size:10.5px;color:var(--ink-3);margin-top:1px}
+.mp-tools{display:inline-flex;gap:2px;margin-top:5px}
+.mp-tools button{font-size:12px;width:24px;height:24px;border-radius:7px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);cursor:pointer;line-height:1}
+.mp-tools button:hover{border-color:var(--brand);color:var(--brand)}
